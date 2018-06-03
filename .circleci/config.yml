@@ -1,0 +1,200 @@
+defaults: &defaults
+  working_directory: ~/nest-seed
+
+build_defaults: &build_defaults
+  <<: *defaults
+  docker:
+    - image: easymetrics/circleci-gcp-node8:latest
+
+version: 2
+jobs:
+  dependency_cache:
+    <<: *build_defaults
+    steps:
+      - checkout
+      - restore_cache:
+          key: dependency-cache-{{ checksum "package.json" }}
+      - run:
+          name: Install Dependencies
+          command: npm install
+      - save_cache:
+          key: dependency-cache-{{ checksum "package.json" }}
+          paths:
+            - node_modules
+      - persist_to_workspace:
+          root: .
+          paths: .
+
+  analysis:
+    <<: *build_defaults
+    steps:
+      - attach_workspace:
+          at: ~/nest-seed
+      - run:
+          name: Run linting.
+          command: npm run lint
+      - run:
+          name: Run NSP Security Check.
+          command: npm run scan:security
+      - run:
+          name: Validate Commit Messages
+          command: npm run ci:lint:commits
+
+  unit-test:
+    <<: *build_defaults
+    steps:
+      - attach_workspace:
+          at: ~/nest-seed
+      - run:
+          name: Jest tests.
+          command: npm run ci:test
+      - run:
+          name: Report Code Coverage
+          command: npm run report-codeclimate
+
+  ts-validate:
+    <<: *build_defaults
+    steps:
+      - attach_workspace:
+          at: ~/nest-seed
+      - run:
+          name: Verify TypeScript Compilation.
+          command: npm run build:dist
+
+  deploy-dev:
+    <<: *build_defaults
+    steps:
+      - attach_workspace:
+          at: ~/nest-seed
+      - setup_remote_docker
+      - run:
+          name: Write Application Configuration
+          command: echo -e "$(cat .docker/env/.env.dist)\nAUTH_CALLBACK_URL=${AUTH_CALLBACK_URL_DEV}" >> .env;
+      - run:
+          name: TypeScript Compilation
+          command: npm run build:dist
+      - run:
+          name: Decode Google Cloud Credentials
+          command: echo ${GOOGLE_AUTH} | base64 -i --decode > ${HOME}/gcp-key.json
+      - run:
+          name: Activate Service Account
+          command: |
+            gcloud auth activate-service-account --key-file ${HOME}/gcp-key.json
+            gcloud --quiet config set project ${GOOGLE_PROJECT_ID}
+            gcloud --quiet config set compute/zone ${GOOGLE_COMPUTE_ZONE}
+      - run:
+          name: Docker Login
+          command: docker login -u _json_key -p "$(cat ${HOME}/gcp-key.json)" https://gcr.io
+      - run:
+          name: Build Application Container
+          command: docker build -f Dockerfile -t nest-seed .
+      - run:
+          name: Tag GCP Application Container
+          command: docker tag nest-seed gcr.io/easymetrics-gcp/nest-seed:${CIRCLE_SHA1}
+      - run:
+          name: Push To Google Container Registry
+          command: gcloud docker -- push gcr.io/easymetrics-gcp/nest-seed:${CIRCLE_SHA1}
+      # - deploy:
+      #     name: Container Engine Deployment Rolling Update
+      #     command: |
+      #         gcloud container clusters get-credentials jobtrak-dev-cluster --zone us-east1-c --project easymetrics-gcp
+      #         kubectl set image deployment/nest-seed --namespace=dev nest-seed=gcr.io/easymetrics-gcp/nest-seed:${CIRCLE_SHA1}
+
+  deploy-prod-shared:
+    <<: *build_defaults
+    steps:
+      - attach_workspace:
+          at: ~/nest-seed
+      - setup_remote_docker
+      - run:
+          name: Write Application Configuration
+          command: echo -e "$(cat .docker/env/.env.dist)\nAUTH_CALLBACK_URL=${AUTH_CALLBACK_URL_DEV}" >> .env;
+      - run:
+          name: TypeScript Compilation
+          command: npm run build:dist
+      - run:
+          name: Decode Google Cloud Credentials
+          command: echo ${GOOGLE_AUTH} | base64 -i --decode > ${HOME}/gcp-key.json
+      - run:
+          name: Activate Service Account
+          command: |
+            gcloud auth activate-service-account --key-file ${HOME}/gcp-key.json
+            gcloud --quiet config set project ${GOOGLE_PROJECT_ID}
+            gcloud --quiet config set compute/zone ${GOOGLE_COMPUTE_ZONE}
+      - run:
+          name: Docker Login
+          command: docker login -u _json_key -p "$(cat ${HOME}/gcp-key.json)" https://gcr.io
+      - run:
+          name: Build Application Container
+          command: docker build -f Dockerfile -t nest-seed .
+      - run:
+          name: Tag GCP Application Container
+          command: docker tag nest-seed gcr.io/easymetrics-gcp/nest-seed:${CIRCLE_TAG}:${CIRCLE_SHA1}
+      - run:
+          name: Push To Google Container Registry
+          command: gcloud docker -- push gcr.io/easymetrics-gcp/nest-seed:${CIRCLE_TAG}:${CIRCLE_SHA1}
+      # - deploy:
+      #     name: Container Engine Deployment Rolling Update
+      #     command: |
+      #         gcloud container clusters get-credentials jobtrak-prod-cluster --zone us-east1-c --project easymetrics-gcp
+      #         kubectl set image deployment/nest-seed --namespace=prod nest-seed=gcr.io/easymetrics-gcp/nest-seed:${CIRCLE_TAG}:${CIRCLE_SHA1}
+
+  deploy-prod-private:
+    <<: *build_defaults
+    steps:
+      - attach_workspace:
+          at: ~/nest-seed
+      - run:
+          name: Verify TypeScript Compilation.
+          command: npm run build:dist
+
+version: 2.0
+workflows:
+  version: 2
+  validate-publish:
+    jobs:
+      - dependency_cache
+      - analysis:
+          requires:
+            - dependency_cache
+          filters:
+            tags:
+              only: /^v.*/
+            branches:
+              only: /.*/
+      - unit-test:
+          requires:
+            - dependency_cache
+          filters:
+            tags:
+              only: /^v.*/
+            branches:
+              only: /.*/
+      - ts-validate:
+          requires:
+            - dependency_cache
+          filters:
+            tags:
+              only: /^v.*/
+            branches:
+              only: /.*/
+      - deploy-dev:
+          requires:
+            - analysis
+            - unit-test
+            - ts-validate
+          filters:
+            tags:
+              ignore: /^v.*/
+            branches:
+              only: master
+      - deploy-prod-shared:
+          requires:
+            - analysis
+            - unit-test
+            - ts-validate
+          filters:
+            tags:
+              only: /^v.*/
+            branches:
+              ignore: /.*/
