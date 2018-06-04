@@ -1,9 +1,9 @@
 {
   "name": "nest-seed",
   "version": "0.0.1",
-  "description": "nest-js-seed-project",
-  "author": "joshua-wiens",
-  "license": "MIT",
+  "description": "NestJS Project Seed",
+  "author": "EasyMetrics",
+  "license": "Apache-2.0",
   "scripts": {
     "start": "npm run serve:dev",
     "build": "npm run lint && npm run transpile",
