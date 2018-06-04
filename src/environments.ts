@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import * as packageInfo from '../package.json';
+import * as readPkg from 'read-pkg';
 
 @Injectable()
 export class Environments {
@@ -8,8 +8,10 @@ export class Environments {
     return process.env.NODE_ENV || 'development';
   }
 
-  public static getPackageInfo(): any {
-    return packageInfo;
+  public static getPackageVersion() {
+    readPkg().then(result => {
+      return result.version;
+    });
   }
 
   public static isTest(): boolean {

@@ -11,7 +11,7 @@ import { Environments } from './environments';
 import { AppModule } from './app.module';
 
 if (fs.existsSync('.env')) {
-  require('dotenv').config();
+  require('dotenv').config(); // tslint:disable-line
 }
 
 const logger = new Logger('HttpsServer');
@@ -50,7 +50,7 @@ httpsInstance.on('listening', () => {
   logger.log(``);
   logger.log(`-------------------------------------------------------`);
   logger.log(`Environment  : ${Environments.getEnv()}`);
-  logger.log(`Version      : ${Environments.getPackageInfo().version}`);
+  logger.log(`Version      : ${Environments.getPackageVersion()}`);
   logger.log(``);
   logger.log(`-------------------------------------------------------`);
   logger.log(``);
